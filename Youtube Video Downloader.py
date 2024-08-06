@@ -1,161 +1,238 @@
-from os.path import expanduser
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from pytube import YouTube, exceptions as pytube_exceptions
-from threading import Thread
+import ttkthemes
+import pytube
+import threading
+import os
+import re
+from PIL import Image, ImageTk
+import requests
+from io import BytesIO
+import time
 
-class YouTubeDownloader:
+class YoutubeDownloader:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("YouTube Downloader Pro")
+        self.master.geometry("800x600")
+        self.master.resizable(False, False)
 
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.resizable(False, False)
-        self.setup_gui()
+        
+        self.style = ttkthemes.ThemedStyle(self.master)
+        self.style.set_theme("equilux")
 
-    def setup_gui(self):
-        self.root.title("YouTube Downloader")
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
+        self.bg_color = "#2E2E2E"
+        self.fg_color = "#FFFFFF"
+        self.accent_color = "#FF0000"
 
-        frame = ttk.Frame(self.root)
-        frame.grid(row=0, column=0, sticky="nsew")
+        self.master.configure(bg=self.bg_color)
 
-        self.label1 = ttk.Label(frame, text="Enter The Link Of The Video You Want To Download:")
-        self.label1.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+        self.create_widgets()
+        self.create_menu()
 
-        self.entry1 = ttk.Entry(frame)
-        self.entry1.grid(row=1, column=0, columnspan=2, padx=10, pady=10)
+    def create_widgets(self):
+      
+        self.main_frame = ttk.Frame(self.master, padding="20")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.detect_quality_button = ttk.Button(frame, text="Detect Quality", command=self.detect_quality)
-        self.detect_quality_button.grid(row=2, column=0, padx=10, pady=10, columnspan=2)
+       
+        self.url_label = ttk.Label(self.main_frame, text="YouTube URL:", foreground=self.fg_color)
+        self.url_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.url_entry = ttk.Entry(self.main_frame, width=50)
+        self.url_entry.grid(row=0, column=1, padx=(0, 10), pady=(0, 10))
+        self.fetch_btn = ttk.Button(self.main_frame, text="Fetch", command=self.fetch_video)
+        self.fetch_btn.grid(row=0, column=2, pady=(0, 10))
 
-        self.label2 = ttk.Label(frame, text="Select Download Quality:")
-        self.label2.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
+      
+        self.fetch_progress_var = tk.DoubleVar()
+        self.fetch_progress_bar = ttk.Progressbar(self.main_frame, variable=self.fetch_progress_var, maximum=100, mode='indeterminate')
+        self.fetch_progress_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.fetch_progress_bar.grid_remove()  
+       
+        self.info_frame = ttk.LabelFrame(self.main_frame, text="Video Information", padding="10")
+        self.info_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(0, 10))
 
-        self.download_options = ttk.Combobox(frame)
-        self.download_options.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
+        self.thumbnail_label = ttk.Label(self.info_frame)
+        self.thumbnail_label.grid(row=0, column=0, rowspan=3, padx=(0, 10))
 
-        self.button1 = ttk.Button(frame, text="Browse", command=self.browse_location)
-        self.button1.grid(row=5, column=0, padx=10, pady=10)
+        self.title_label = ttk.Label(self.info_frame, text="Title: ", foreground=self.fg_color)
+        self.title_label.grid(row=0, column=1, sticky="w")
 
-        self.button2 = ttk.Button(frame, text="Download", command=self.download_video)
-        self.button2.grid(row=5, column=1, padx=10, pady=10)
+       
+        self.duration_label = ttk.Label(self.info_frame, text="Duration: ", foreground=self.fg_color)
+        self.duration_label.grid(row=1, column=1, sticky="w")
 
-        self.progress_label = ttk.Label(frame, text="Download Progress:")
-        self.progress_label.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
+      
+        self.views_label = ttk.Label(self.info_frame, text="Views: ", foreground=self.fg_color)
+        self.views_label.grid(row=2, column=1, sticky="w")
 
-        self.progress_bar = ttk.Progressbar(frame, orient="horizontal", length=300, mode="determinate")
-        self.progress_bar.grid(row=7, column=0, columnspan=2, padx=10, pady=10)
+    
+        self.download_frame = ttk.LabelFrame(self.main_frame, text="Download Options", padding="10")
+        self.download_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=(0, 10))
 
-        self.percentage_label = ttk.Label(frame, text="")
-        self.percentage_label.grid(row=8, column=0, columnspan=2, padx=10, pady=10)
+     
+        self.quality_label = ttk.Label(self.download_frame, text="Quality:", foreground=self.fg_color)
+        self.quality_label.grid(row=0, column=0, sticky="w")
+        self.quality_combo = ttk.Combobox(self.download_frame, state="readonly", width=30)
+        self.quality_combo.grid(row=0, column=1, padx=(0, 10))
 
-        self.label3 = ttk.Label(frame, text="Enter File Name:")
-        self.label3.grid(row=9, column=0, columnspan=2, padx=10, pady=10)
+       
+        self.format_label = ttk.Label(self.download_frame, text="Format:", foreground=self.fg_color)
+        self.format_label.grid(row=0, column=2, sticky="w")
+        self.format_combo = ttk.Combobox(self.download_frame, state="readonly", width=10)
+        self.format_combo.grid(row=0, column=3)
 
-        self.entry_file_name = ttk.Entry(frame)
-        self.entry_file_name.grid(row=10, column=0, columnspan=2, padx=10, pady=10)
+      
+        self.download_btn = ttk.Button(self.main_frame, text="Download", command=self.start_download)
+        self.download_btn.grid(row=4, column=0, columnspan=3, pady=(0, 10))
 
-        self.entry1.bind("<FocusOut>", self.detect_quality)
+      
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(self.main_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 10))
 
-        self.download_path = expanduser("~") + "/Desktop"
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x_coordinate = (screen_width - self.root.winfo_reqwidth()) // 2
-        y_coordinate = (screen_height - self.root.winfo_reqheight()) // 2
-        self.root.geometry("+{}+{}".format(x_coordinate, y_coordinate))
+       
+        self.status_label = ttk.Label(self.main_frame, text="", foreground=self.fg_color)
+        self.status_label.grid(row=6, column=0, columnspan=3)
 
-    def browse_location(self):
-        self.download_path = filedialog.askdirectory()
+    def create_menu(self):
+        menubar = tk.Menu(self.master)
+        self.master.config(menu=menubar)
 
-    def is_valid_link(self, link):
-        if not link.strip():
-            return False
-        try:
-            YouTube(link)
-            return True
-        except pytube_exceptions.RegexMatchError:
-            return False
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Open Download Folder", command=self.open_download_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.master.quit)
 
-    def detect_quality(self, event=None):
-        link = self.entry1.get()
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
 
-        if not self.is_valid_link(link):
-            if link.strip():
-                messagebox.showerror("Error", "Invalid YouTube link.")
+    def fetch_video(self):
+        url = self.url_entry.get()
+        if not url:
+            messagebox.showerror("Error", "Please enter a YouTube URL")
             return
 
-        # Run detect_quality in a separate thread
-        Thread(target=self.detect_quality_worker, args=(link,)).start()
+        self.status_label.config(text="Fetching video information...")
+        self.fetch_progress_bar.grid()  
+        self.fetch_progress_bar.start(10)  
+        self.fetch_btn.config(state="disabled")  
+        
+        threading.Thread(target=self._fetch_video_thread, args=(url,), daemon=True).start()
 
-    def detect_quality_worker(self, link):
+    def _fetch_video_thread(self, url):
         try:
-            videodown = YouTube(link)
-            available_qualities = [stream.resolution for stream in videodown.streams.filter(progressive=True)]
-            self.root.after(0, self.update_quality_options, available_qualities)
-        except pytube_exceptions.RegexMatchError:
-            self.root.after(0, self.show_error_message, "Invalid YouTube link.")
+            yt = pytube.YouTube(url)
+            self.current_video = yt
 
-    def update_quality_options(self, available_qualities):
-        self.download_options['values'] = available_qualities
-
-        if available_qualities:
-            self.download_options.set(available_qualities[0])  # Set the default quality
-        else:
-            messagebox.showinfo("Info", "No progressive download options available.")
-
-    def download_video(self):
-        link = self.entry1.get()
-
-        # Run download_video in a separate thread
-        Thread(target=self.download_video_worker, args=(link,)).start()
-
-    def download_video_worker(self, link):
-        try:
-            videodown = YouTube(link,
-                                on_progress_callback=lambda stream, chunk, remaining: self.download_progress(stream, chunk,
-                                                                                                               remaining,
-                                                                                                               self.percentage_label))
-
-            video = videodown.streams.filter(progressive=True, resolution=self.download_options.get()).first()
-
-            if not video:
-                self.root.after(0, self.show_error_message, "No download options available for the selected quality.")
-                return
-
-            file_name = self.entry_file_name.get().strip()
-
-            if not file_name:
-                file_name = "video"
-
-            file_name += ".mp4"
-
-            print(f"Downloading: {video.title}")
-            video.download(output_path=self.download_path, filename=file_name)
-            print("Video Downloaded Successfully")
-            self.root.after(0, self.show_download_complete_message)
-
+            self.master.after(0, self._update_video_info, yt)
         except Exception as e:
-            self.root.after(0, self.show_error_message, str(e))
+            self.master.after(0, self._show_fetch_error, str(e))
+        finally:
+            self.master.after(0, self._finish_fetch)
 
-    def download_progress(self, stream, chunk, remaining, percentage_label):
-        total_size = stream.filesize
-        bytes_downloaded = total_size - remaining
+    def _update_video_info(self, yt):
+        self.title_label.config(text=f"Title: {yt.title}")
+        self.duration_label.config(text=f"Duration: {time.strftime('%H:%M:%S', time.gmtime(yt.length))}")
+        self.views_label.config(text=f"Views: {yt.views:,}")
+
+ 
+        threading.Thread(target=self._fetch_thumbnail, args=(yt.thumbnail_url,), daemon=True).start()
+
+        streams = yt.streams.filter(progressive=True)
+        qualities = list(set([f"{s.resolution} ({s.mime_type.split('/')[1]})" for s in streams]))
+        self.quality_combo['values'] = qualities
+        if qualities:
+            self.quality_combo.set(qualities[0])
+
+        self.status_label.config(text="Video information fetched successfully")
+
+    def _fetch_thumbnail(self, url):
+        try:
+            response = requests.get(url)
+            img = Image.open(BytesIO(response.content))
+            img.thumbnail((150, 150))
+            photo = ImageTk.PhotoImage(img)
+            self.master.after(0, self._update_thumbnail, photo)
+        except Exception as e:
+            print(f"Error fetching thumbnail: {e}")
+
+    def _update_thumbnail(self, photo):
+        self.thumbnail_label.config(image=photo)
+        self.thumbnail_label.image = photo
+
+    def _show_fetch_error(self, error_message):
+        messagebox.showerror("Error", error_message)
+        self.status_label.config(text="Failed to fetch video information")
+
+    def _finish_fetch(self):
+        self.fetch_progress_bar.stop()  
+        self.fetch_progress_bar.grid_remove()  
+        self.fetch_btn.config(state="normal")  
+
+    def start_download(self):
+        if not hasattr(self, 'current_video'):
+            messagebox.showerror("Error", "Please fetch a video first")
+            return
+
+        quality = self.quality_combo.get()
+        if not quality:
+            messagebox.showerror("Error", "Please select a quality")
+            return
+
+        try:
+            resolution, format_ = re.match(r"(\d+p) \((\w+)\)", quality).groups()
+        except AttributeError:
+            messagebox.showerror("Error", "Invalid quality format selected")
+            return
+
+        stream = self.current_video.streams.filter(progressive=True, resolution=resolution, file_extension=format_).first()
+
+        if not stream:
+            messagebox.showerror("Error", "No stream found for the selected quality")
+            return
+
+        save_path = filedialog.asksaveasfilename(defaultextension=f".{format_}", filetypes=[("All Files", "*.*")])
+        if not save_path:
+            return
+
+        self.status_label.config(text="Downloading...")
+        self.progress_var.set(0)
+        threading.Thread(target=self._download_thread, args=(stream, save_path), daemon=True).start()
+
+    def _download_thread(self, stream, save_path):
+        try:
+
+            stream.download(filename=save_path, on_progress_callback=self.update_progress)
+            self.master.after(0, self._download_complete)
+        except Exception as e:
+            self.master.after(0, self._download_failed, str(e))
+
+    def _download_complete(self):
+        self.status_label.config(text="Download completed successfully")
+        messagebox.showinfo("Success", "Video downloaded successfully")
+
+    def _download_failed(self, error_message):
+        messagebox.showerror("Error", error_message)
+        self.status_label.config(text="Download failed")
+
+    def update_progress(self, chunk, file_handle, bytes_remaining):
+        total_size = self.current_video.streams.first().filesize
+        bytes_downloaded = total_size - bytes_remaining
         percentage = (bytes_downloaded / total_size) * 100
-        self.progress_bar['value'] = percentage
-        percentage_label["text"] = f"{percentage:.1f}%"
+        self.master.after(0, self.progress_var.set, percentage)
 
-    def show_download_complete_message(self):
-        messagebox.showinfo("Download Complete", "Video Downloaded Successfully")
-        self.progress_bar['value'] = 0
-        self.percentage_label["text"] = ""
+    def open_download_folder(self):
+        download_path = os.path.expanduser("~/Downloads")
+        os.startfile(download_path)
 
-    def show_error_message(self, message):
-        messagebox.showerror("Error", message)
-
-    def run(self):
-        self.root.mainloop()
-
+    def show_about(self):
+        about_text = "YouTube Downloader Pro\nVersion 1.0\n\nCreated by Your Name\n\nThis application allows you to download YouTube videos with ease."
+        messagebox.showinfo("About", about_text)
 
 if __name__ == "__main__":
-    youtubedownloader = YouTubeDownloader()
-    youtubedownloader.run()
+    root = tk.Tk()
+    app = YoutubeDownloader(root)
+    root.mainloop()
